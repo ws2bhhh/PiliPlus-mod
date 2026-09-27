@@ -317,21 +317,23 @@ abstract final class VideoHttp {
   static Future<LoadingState<List<HotVideoItemModel>?>> relatedVideoList({
     required String bvid,
   }) async {
-    final res = await Request().get(
-      Api.relatedList,
-      queryParameters: {'bvid': bvid},
-    );
-    if (res.data['code'] == 0) {
-      final items = (res.data['data'] as List?)?.map(
-        (i) => HotVideoItemModel.fromJson(i),
-      );
-      final list = RecommendFilter.applyFilterToRelatedVideos
-          ? items?.where((i) => !RecommendFilter.filterAll(i)).toList()
-          : items?.toList();
-      return Success(list);
-    } else {
-      return Error(res.data['message']);
-    }
+    // final res = await Request().get(
+    //   Api.relatedList,
+    //   queryParameters: {'bvid': bvid},
+    // );
+    // if (res.data['code'] == 0) {
+    //   final items = (res.data['data'] as List?)?.map(
+    //     (i) => HotVideoItemModel.fromJson(i),
+    //   );
+    //   final list = RecommendFilter.applyFilterToRelatedVideos
+    //       ? items?.where((i) => !RecommendFilter.filterAll(i)).toList()
+    //       : items?.toList();
+    //   return Success(list);
+    // } else {
+    //   return Error(res.data['message']);
+    // }
+      // 永远返回空列表，不再请求相关视频接口
+      return Success(<HotVideoItemModel>[]);
   }
 
   // 获取点赞/投币/收藏状态 pgc
