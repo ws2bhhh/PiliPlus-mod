@@ -61,8 +61,8 @@ import 'package:flutter_volume_controller/flutter_volume_controller.dart';
 import 'package:get/get.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'exo/exo_backend.dart';
 import 'package:native_device_orientation/native_device_orientation.dart';
 import 'package:nativeapi/nativeapi.dart' as nativeapi show Size, Rectangle;
 import 'package:path/path.dart' as path;
@@ -74,8 +74,7 @@ typedef PlayCallback = Future<void>? Function();
 typedef PlayOwner = ({String tag, Type type});
 
 class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
-  Player? _videoPlayerController;
-  VideoController? _videoController;
+  PlExoBackend? _videoPlayerController;
 
   static PlPlayerController? _instance;
 
@@ -169,11 +168,11 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   // 长按倍速
   double get longPressSpeed => _longPressSpeed.value;
 
-  /// [videoPlayerController] instance of Player
-  Player? get videoPlayerController => _videoPlayerController;
+  /// [videoPlayerController] instance of PlExoBackend (Media3 ExoPlayer)
+  PlExoBackend? get videoPlayerController => _videoPlayerController;
 
-  /// [videoController] instance of Player
-  VideoController? get videoController => _videoController;
+  /// [videoController] 渲染控制器（ExoPlayer 内核下与播放器一体）
+  PlExoBackend? get videoController => _videoPlayerController;
 
   bool isMuted = false;
 
@@ -355,7 +354,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   }
 
   void enterPip({bool autoEnter = false}) {
-    if (videoPlayerController case NativePlayer(:final state)) {
+    if (videoPlayerController case final player?) {
+      final state = player.state;
       if (Platform.isIOS) {
         if (videoController?.id.value case final textureId?) {
           IOSPipHelper.enter(
@@ -388,7 +388,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
   }
 
-  Map<String, Object> _iosPipState(PlayerState state, [Duration? position]) {
+  Map<String, Object> _iosPipState(PlExoState state, [Duration? position]) {
     return {
       'isPlaying': playerStatus.isPlaying,
       'isBuffering': isBuffering.value,
@@ -758,7 +758,6 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         _removeListeners();
         _videoPlayerController?.dispose();
         _videoPlayerController = null;
-        _videoController = null;
         return;
       }
 
@@ -800,7 +799,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   late final isAnim = _pgcType == 1 || _pgcType == 4;
   late final Rx<SuperResolutionType> superResolutionType =
       (isAnim ? Pref.superResolutionType : SuperResolutionType.disable).obs;
-  Future<void> setShader([SuperResolutionType? type, NativePlayer? pp]) async {
+  /// mpv glsl-shaders 超分在 ExoPlayer 内核下不可用，仅保留设置状态（入口置灰）
+  Future<void> setShader([SuperResolutionType? type, PlExoBackend? pp]) async {
     if (type == null) {
       type = superResolutionType.value;
     } else {
@@ -809,79 +809,28 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         setting.put(SettingBoxKey.superResolutionType, type.index);
       }
     }
-    pp ??= _videoPlayerController!;
-    switch (type) {
-      case SuperResolutionType.disable:
-        return pp.command(const ['change-list', 'glsl-shaders', 'clr', '']);
-      case SuperResolutionType.efficiency:
-        return pp.command([
-          'change-list',
-          'glsl-shaders',
-          'set',
-          PathUtils.buildShadersAbsolutePath(
-            await copyShadersToExternalDirectory,
-            Assets.mpvAnime4KShadersLite,
-          ),
-        ]);
-      case SuperResolutionType.quality:
-        return pp.command([
-          'change-list',
-          'glsl-shaders',
-          'set',
-          PathUtils.buildShadersAbsolutePath(
-            await copyShadersToExternalDirectory,
-            Assets.mpvAnime4KShaders,
-          ),
-        ]);
+    if (kDebugMode) {
+      debugPrint('setShader($type): glsl-shaders unsupported on ExoPlayer, ignored');
     }
   }
 
-  Future<Player> _initPlayer() async {
+  Future<PlExoBackend> _initPlayer() async {
     assert(_videoPlayerController == null);
-    final opt = {
-      'video-sync': Pref.videoSync,
-      if (Platform.isAndroid) 'ao': Pref.audioOutput,
-      'volume':
-          (PlatformUtils.isMobile ? Pref.playerVolume : volume.value * 100)
-              .toString(),
-    };
-    final autosync = Pref.autosync;
-    if (autosync != '0') {
-      opt['autosync'] = autosync;
-    }
-
-    final player = await Player.create(
-      configuration: PlayerConfiguration(
-        logLevel: kDebugMode ? .warn : .error,
-        options: opt,
+    final player = await PlExoBackend.create(
+      hardDecode: hardDecodeFromLegacy(
+        enableHA: Pref.enableHA,
+        hwdec: Pref.hardwareDecoding,
       ),
     );
-
-    assert(_videoController == null);
-
-    _videoController = await VideoController.create(
-      player,
-      configuration: VideoControllerConfiguration(
-        enableHardwareAcceleration: hwdec != null,
-        androidAttachSurfaceAfterVideoParameters: false,
-        hwdec: hwdec,
-      ),
-    );
-
-    if (Platform.isAndroid) {
-      // Avoid sizing the surface using mpv's idle window between media loads.
-      player.setProperty('force-window', 'no');
+    // 初始音量（对齐原 mpv 'volume' option）
+    if (PlatformUtils.isMobile) {
+      await player.setVolume(Pref.playerVolume / 100);
+    } else {
+      await player.setVolume(volume.value);
     }
-
-    player.setMediaHeader(userAgent: BrowserUa.pc, referer: HttpString.baseUrl);
-
     _startListeners(player);
-
     return player;
   }
-
-  late final buffer = Pref.initBuffer(_playbackSpeed.value);
-  late final liveBuffer = Pref.initLiveBuffer();
 
   // 配置播放器
   Future<void> _createVideoController(
@@ -901,7 +850,6 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         _removeListeners();
         player.dispose();
         player = null;
-        _videoController = null;
         return;
       }
       _videoPlayerController = player;
@@ -910,39 +858,22 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       }
     }
 
-    final Map<String, String> extras = {
-      if (dataSource is FileSource)
-        'cache': 'no'
-      else if (isLive)
-        ...liveBuffer
-      else
-        ...buffer,
-    };
-
-    String video = dataSource.videoSource;
-    if (dataSource.audioSource case final audio? when (audio.isNotEmpty)) {
-      if (onlyPlayAudio.value) {
-        video = audio;
-      } else {
-        // dely_open need provide length
-        video =
-            ('edl://'
-            '!no_chapters;'
-            // '!delay_open,media_type=video;'
-            '%${isFileSource ? utf8.encode(video).length : video.length}%$video;'
-            '!new_stream;!no_chapters;'
-            // '!delay_open,media_type=audio;'
-            '%${isFileSource ? utf8.encode(audio).length : audio.length}%$audio');
-      }
-      audioFilterExtras(volume, map: extras);
-    }
+    final String video = dataSource.videoSource;
+    final String? audio = dataSource.audioSource;
+    final hasAudio = audio != null && audio.isNotEmpty;
 
     assert(!isLive || seekTo == null);
+    // DASH 双流由 ExoPlayer MergingMediaSource 合并（原 mpv edl:// 拼接已废弃）
     await player.open(
-      Media(
-        video,
+      PlExoMedia(
+        url: hasAudio && onlyPlayAudio.value ? audio! : video,
+        audioUrl: hasAudio && !onlyPlayAudio.value ? audio : null,
         start: seekTo,
-        extras: extras.isEmpty ? null : extras,
+        audioOnly: hasAudio && onlyPlayAudio.value,
+        headers: {
+          'user-agent': BrowserUa.pc,
+          'referer': HttpString.baseUrl,
+        },
       ),
       play: false,
     );
@@ -952,10 +883,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     if (dataSource is FileSource) {
       return null;
     }
-    if (_videoPlayerController case final ctr? when (ctr.current.isNotEmpty)) {
-      var media = ctr.current.last;
-      if (!isLive) media = media.copyWith(start: ctr.state.position);
-      return ctr.open(media, play: true);
+    if (_videoPlayerController case final ctr?) {
+      return ctr.refresh();
     }
     return null;
   }
@@ -1015,7 +944,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   }
 
   /// 播放事件监听
-  void _startListeners(NativePlayer player) {
+  void _startListeners(PlExoBackend player) {
     assert(_subscriptions == null);
     final stream = player.stream;
     _subscriptions = [
@@ -1097,45 +1026,16 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
           _updatePlaybackState();
         }
       }),
-      if (kDebugMode)
-        stream.log.listen(((PlayerLog log) {
-          if (log.level == 'error' || log.level == 'fatal') {
-            Utils.reportError(
-              '${log.level}: ${log.prefix}: ${log.text}\n${player.state.playlist}',
-              null,
-            );
-          } else {
-            debugPrint(log.toString());
-          }
-        })),
       stream.error.listen((String event) {
-        if (dataSource is FileSource &&
-            event.startsWith("Failed to open file")) {
+        if (dataSource is FileSource) {
           return;
         }
-        if (isLive) {
-          if (event.startsWith('tcp: ffurl_read returned ') ||
-              event.startsWith("Failed to open https://") ||
-              event.startsWith("Can not open external file https://")) {
-            Timer(const Duration(milliseconds: 3000), refreshPlayer);
-          }
-          return;
-        }
-        if (event.startsWith("Failed to open https://") ||
-            event.startsWith("Can not open external file https://") ||
-            //tcp: ffurl_read returned 0xdfb9b0bb
-            //tcp: ffurl_read returned 0xffffff99
-            event.startsWith('tcp: ffurl_read returned ')) {
-          EasyThrottle.throttle(
-            'controllerStream.error.listen',
-            const Duration(milliseconds: 10000),
-            () => Timer(const Duration(milliseconds: 3000), () {
-              // if (kDebugMode) {
-              //   debugPrint("isBuffering.value: ${isBuffering.value}");
-              // }
-              // if (kDebugMode) {
-              //   debugPrint("_buffered.value: ${_buffered.value}");
-              // }
+        // 打开失败/网络错误：延迟重试（对齐原 mpv 错误恢复逻辑）
+        EasyThrottle.throttle(
+          'controllerStream.error.listen',
+          const Duration(milliseconds: 10000),
+          () {
+            Timer(const Duration(milliseconds: 3000), () {
               if (isBuffering.value && buffered.value == 0) {
                 SmartDialog.showToast(
                   '视频链接打开失败，重试中',
@@ -1143,21 +1043,11 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
                 );
                 refreshPlayer();
               }
-            }),
-          );
-        } else if (event.startsWith('Could not open codec')) {
-          SmartDialog.showToast('无法加载解码器, $event，可能会切换至软解');
-        } else if (!onlyPlayAudio.value) {
-          if (event.startsWith("error running") ||
-              event.startsWith("Failed to open .") ||
-              event.startsWith("Cannot open") ||
-              event.startsWith("Can not open")) {
-            return;
-          }
-          if (!kDebugMode) {
-            Utils.reportError('$event\n${player.state.playlist}');
-          }
-          // SmartDialog.showToast('视频加载错误, $event');
+            });
+          },
+        );
+        if (!kDebugMode) {
+          Utils.reportError('pl_exo error: $event');
         }
       }),
     ];
@@ -1299,7 +1189,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       this.volume.value = volume;
       try {
         if (PlatformUtils.isDesktop) {
-          await _videoPlayerController!.setVolume(volume * 100);
+          await _videoPlayerController!.setVolume(volume);
         } else {
           FlutterVolumeController.updateShowSystemUI(false);
           await FlutterVolumeController.setVolume(volume);
@@ -1703,7 +1593,6 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
     _videoPlayerController?.dispose();
     _videoPlayerController = null;
-    _videoController = null;
     _instance = null;
     videoPlayerServiceHandler?.clear();
   }
@@ -1762,7 +1651,14 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   }
 
   int _screenshotState = 0;
+
+  /// 截图依赖 mpv screenshot，当前 ExoPlayer 内核下置灰（入口保留，点击提示）
   Future<void> takeScreenshot() async {
+    SmartDialog.showToast('当前播放内核暂不支持截图');
+  }
+
+  // ignore: unused_element
+  Future<void> _takeScreenshotLegacy() async {
     if (_screenshotState > 0) return;
     _screenshotState = 1;
     SmartDialog.showToast('截图中');

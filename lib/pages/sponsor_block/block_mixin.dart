@@ -17,7 +17,6 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_design_icons_flutter/material_design_icons_flutter.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:media_kit/media_kit.dart';
 
 mixin BlockConfigMixin {
   late final pgcSkipType = Pref.pgcSkipType;
@@ -48,7 +47,9 @@ mixin BlockMixin on GetxController {
   late final List<Object> listData = [];
 
   RxString? get videoLabel => null;
-  Player? get player;
+
+  /// 视频页为 PlExoBackend，音频页为 media_kit Player（双内核，接口兼容）
+  dynamic get player;
   bool get autoPlay;
   int? get timeLength;
   bool get preInitPlayer;

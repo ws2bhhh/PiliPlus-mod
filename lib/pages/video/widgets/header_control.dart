@@ -72,7 +72,7 @@ import 'package:hive_ce/hive.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:material_design_icons_flutter/material_design_icons_flutter.dart';
 import 'package:material_ui/material_ui.dart' hide showBottomSheet;
-import 'package:media_kit/media_kit.dart' show NativePlayer;
+import 'package:PiliPlus/plugin/pl_player/exo/exo_backend.dart';
 
 mixin TimeBatteryMixin<T extends StatefulWidget> on State<T> {
   PlPlayerController get plPlayerController;
@@ -506,7 +506,7 @@ class HeaderControlState extends State<HeaderControl>
                         onTap: () => showPlayerVolumeDialog(
                           context,
                           () => (context as Element).markNeedsBuild(),
-                          onChanged: player.setVolume,
+                          onChanged: (value) => player.setVolume(value / 100),
                         ),
                       ),
                     ),
@@ -588,14 +588,10 @@ class HeaderControlState extends State<HeaderControl>
                                     !onlyPlayAudio;
                                 final player =
                                     plPlayerController.videoPlayerController!;
-                                if (onlyPlayAudio &&
-                                    player.state.tracks.video.length <= 2) {
+                                if (onlyPlayAudio && player.state.width <= 0) {
                                   videoDetailCtr.playerInit();
                                 } else {
-                                  player.setProperty(
-                                    'file-local-options/vid',
-                                    onlyPlayAudio ? 'auto' : 'no',
-                                  );
+                                  player.setAudioOnly(!onlyPlayAudio);
                                 }
                               },
                               text: " 听视频 ",
@@ -807,10 +803,8 @@ class HeaderControlState extends State<HeaderControl>
 
   static void showPlayerInfo(
     BuildContext context, {
-    required NativePlayer player,
+    required dynamic player,
   }) {
-    final hwdec = player.getProperty('hwdec-current');
-    final volume = player.getProperty('volume');
     showDialog(
       context: context,
       builder: (context) {
@@ -836,37 +830,21 @@ class HeaderControlState extends State<HeaderControl>
                     ),
                     ListTile(
                       dense: true,
-                      title: const Text("VideoParams"),
-                      subtitle: Text(state.videoParams.toString()),
-                      onTap: () =>
-                          Utils.copyText('VideoParams\n${state.videoParams}'),
+                      title: const Text("Position"),
+                      subtitle: Text(state.position.toString()),
+                      onTap: () => Utils.copyText('Position\n${state.position}'),
                     ),
                     ListTile(
                       dense: true,
-                      title: const Text("AudioParams"),
-                      subtitle: Text(state.audioParams.toString()),
-                      onTap: () =>
-                          Utils.copyText('AudioParams\n${state.audioParams}'),
+                      title: const Text("Duration"),
+                      subtitle: Text(state.duration.toString()),
+                      onTap: () => Utils.copyText('Duration\n${state.duration}'),
                     ),
                     ListTile(
                       dense: true,
-                      title: const Text("Media"),
-                      subtitle: Text(state.playlist.toString()),
-                      onTap: () => Utils.copyText('Media\n${state.playlist}'),
-                    ),
-                    ListTile(
-                      dense: true,
-                      title: const Text("AudioTrack"),
-                      subtitle: Text(state.track.audio.toString()),
-                      onTap: () =>
-                          Utils.copyText('AudioTrack\n${state.track.audio}'),
-                    ),
-                    ListTile(
-                      dense: true,
-                      title: const Text("VideoTrack"),
-                      subtitle: Text(state.track.video.toString()),
-                      onTap: () =>
-                          Utils.copyText('VideoTrack\n${state.track.video}'),
+                      title: const Text("Buffered"),
+                      subtitle: Text(state.buffer.toString()),
+                      onTap: () => Utils.copyText('Buffered\n${state.buffer}'),
                     ),
                     ListTile(
                       dense: true,
@@ -876,15 +854,10 @@ class HeaderControlState extends State<HeaderControl>
                     ),
                     ListTile(
                       dense: true,
-                      title: const Text("Volume"),
-                      subtitle: Text(volume),
-                      onTap: () => Utils.copyText('Volume\n$volume'),
-                    ),
-                    ListTile(
-                      dense: true,
                       title: const Text('hwdec'),
-                      subtitle: Text(hwdec),
-                      onTap: () => Utils.copyText('hwdec\n$hwdec'),
+                      subtitle: Text(Pref.hardwareDecoding),
+                      onTap: () =>
+                          Utils.copyText('hwdec\n${Pref.hardwareDecoding}'),
                     ),
                   ],
                 ),
