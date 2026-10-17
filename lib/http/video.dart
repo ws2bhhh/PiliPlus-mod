@@ -380,6 +380,7 @@ abstract final class VideoHttp {
   static Future<LoadingState<List<HotVideoItemModel>?>> relatedVideoList({
     required String bvid,
   }) async {
+    return Success(<HotVideoItemModel>[]);
     final res = await Request().get(
       Api.relatedList,
       queryParameters: {'bvid': bvid},
